@@ -1,47 +1,152 @@
-[
-  {
-    "kind": 2,
-    "language": "github-issues",
-    "value": "$milestone=milestone:\"August 2024\""
-  },
-  {
-    "kind": 1,
-    "language": "markdown",
-    "value": "# vscode.dev repo"
-  },
-  {
-    "kind": 2,
-    "language": "github-issues",
-    "value": "repo:microsoft/vscode-dev $milestone is:open"
-  },
-  {
-    "kind": 2,
-    "language": "github-issues",
-    "value": "repo:microsoft/vscode-dev milestone:\"Backlog\" is:open"
-  },
-  {
-    "kind": 1,
-    "language": "markdown",
-    "value": "# VS Code repo"
-  },
-  {
-    "kind": 2,
-    "language": "github-issues",
-    "value": "repo:microsoft/vscode label:vscode.dev is:open"
-  },
-  {
-    "kind": 1,
-    "language": "markdown",
-    "value": "# GitHub Repositories repos"
-  },
-  {
-    "kind": 2,
-    "language": "github-issues",
-    "value": "repo:microsoft/vscode-remote-repositories-github $milestone is:open"
-  },
-  {
-    "kind": 2,
-    "language": "github-issues",
-    "value": "repo:microsoft/vscode-remotehub $milestone is:open"
-  }
-]
+from tkinter import messagebox 
+import pandas as pd  
+import os  # noqa: F401
+import tkinter as tk  
+from tkinter import Tk, Label, Button, Text, Toplevel, END, filedialog  # noqa: F401
+
+MAPA_REGISTROS = {
+    '5010': 2, '5015': 13, '5060': 2, '5065': 12, '5080': 2, '5085': 12, '5100': 2,
+    '5110': 2, '5150': 2, '5155': 2, '5160': 10, '5165': 2, '5170': 2, '5175': 12,
+    '5180': 2, '5185': 10, '5190': 2, '5195': 9, '5210': 2, '5215': 10, '5230': 2,
+    '5235': 2, '5240': 10, '5260': 2, '5265': 2, '5270': 2, '5275': 12, '5310': 2,
+    '5360': 2, '5410': 2, '5550': 2, '5555': 11, '5590': 2, '5595': 2
+}
+CAMINHO_ARQUIVOS = r'C:\Área de Trabalho\piloto.cat83\arquivoscat'
+arquivo = ""
+base0200_path = ""  # Variável global para armazenar o caminho da base 0200
+itens_info = []  # Lista global para armazenar os itens inseridos manualmente
+
+def processar_dados():
+    global arquivo
+    global base0200_path
+    if not arquivo or not base0200_path:  # Verifica se ambos os arquivos foram selecionados
+        messagebox.showinfo("Erro", "Por favor, selecione ambos os arquivos antes de iniciar.")
+        return
+
+    # Tente ler o arquivo com várias codificações
+    codificacoes = ['utf-8', 'latin-1', 'iso-8859-1']
+    for cod in codificacoes:
+        try:
+            with open(arquivo, 'r', encoding=cod) as f:
+                linhas = f.readlines()
+            break  # Se a leitura do arquivo for bem-sucedida, sai do loop
+        except UnicodeDecodeError:
+            pass  # Se ocorrer um erro, tenta a próxima codificação
+    else:
+        messagebox.showinfo("Erro", "Não foi possível ler o arquivo com nenhuma das codificações.")
+        return
+
+    df_5xxx = []
+    df_0200 = []
+    for linha in linhas:
+        campos = linha.strip().split('|')
+        if campos[0] in MAPA_REGISTROS:
+            df_5xxx.append(campos)
+        elif campos[0] == '0200':
+            df_0200.append(campos)
+    df_5xxx = pd.DataFrame(df_5xxx)
+    df_0200 = pd.DataFrame(df_0200)
+    df_0200[1] = df_0200[1].astype(str).str.strip()
+
+    # Leitura do arquivo Excel com COD_GEN como texto
+    df_excel = pd.read_excel(
+        base0200_path,
+        usecols=['REG', 'COD_ITEM', 'DESCR_ITEM', 'UNI', 'COD_GEN'],
+        dtype={'COD_GEN': str}
+    )
+    df_excel = df_excel.astype(str)
+    df_excel['COD_ITEM'] = df_excel['COD_ITEM'].str.strip()
+
+    codigos_itens = {}
+    for registro, coluna in MAPA_REGISTROS.items():
+        df_registro = df_5xxx[df_5xxx[0] == registro]
+        codigos_itens[registro] = df_registro.iloc[:, coluna - 1].astype(str).str.strip().unique()
+    codigos_0200 = df_0200[1].unique()
+    itens_faltantes = set()
+    for registro, codigos in codigos_itens.items():
+        for codigo in codigos:
+            if codigo not in codigos_0200:
+                itens_faltantes.add(codigo)
+    info_item = pd.DataFrame()  # Inicializa info_item como um DataFrame vazio
+    for item in itens_faltantes:
+        info_item = df_excel[df_excel['COD_ITEM'] == item]
+        if not info_item.empty:
+            info_item = info_item.iloc[0]  # Pega a primeira linha se encontrar o item
+            cod_gen = info_item.get('COD_GEN', '')  # Obtém COD_GEN ou vazio se não existir
+
+            # Verifica se COD_GEN é válido (não nulo, não NaN)
+            if pd.notnull(cod_gen) and not pd.isna(cod_gen) and cod_gen.lower() != 'nan':
+                cod_gen_str = f"|{cod_gen}"
+            else:
+                cod_gen_str = "|"
+            # Gera a string com a formatação correta (sem alterações)
+            info_str = f"0200|{info_item.get('COD_ITEM', '')}|{info_item.get('DESCR_ITEM', '')}|{info_item.get('UNI', '')}{cod_gen_str}"
+            itens_info.append(info_str)
+        else:
+            abrir_janela(f"Item {item} não encontrado na base 0200. Por favor, insira os detalhes manualmente:")
+
+    # Inserção e escrita no arquivo
+    novas_linhas = []
+    inseriu_info = False
+    for i, linha in enumerate(linhas):
+        if linha.startswith('0150'):
+            if not inseriu_info and i + 1 < len(linhas) and not linhas[i + 1].startswith('0150'):
+                novas_linhas.append(linha.rstrip() + "\n")  # Remove espaços em branco e adiciona quebra de linha
+                for info_str in itens_info:
+                    novas_linhas.append(info_str + "\n")  # Insere cada informação em uma linha separada com quebra de linha
+                inseriu_info = True
+            else:
+                novas_linhas.append(linha.rstrip() + "\n")  # Remove espaços em branco e adiciona quebra de linha
+        else:
+            novas_linhas.append(linha.rstrip() + "\n")  # Remove espaços em branco e adiciona quebra de linha
+    with open(arquivo, 'w', encoding='utf-8') as f:
+        f.writelines(novas_linhas)
+    # Mensagem final
+    messagebox.showinfo("Sucesso", "Informações inseridas no arquivo com sucesso.")
+    root.quit()  # Encerra a execução do programa
+
+def abrir_janela(texto):
+    janela_popup = tk.Toplevel()
+    janela_popup.title("Adicionar Item")
+    
+    label = tk.Label(janela_popup, text=texto)
+    label.pack()
+    
+    entrada_texto = tk.Text(janela_popup, height=10, width=50)
+    entrada_texto.pack()
+    
+    def inserir_item():
+        item_texto = entrada_texto.get("1.0", END).strip()
+        if item_texto:  # Verifica se o item foi inserido corretamente
+            itens_info.append(item_texto)
+            entrada_texto.delete("1.0", END)
+            janela_popup.destroy()  # Fecha a janela após a inserção correta
+            root.quit()  # Encerra a execução do programa
+    
+    botao_inserir = tk.Button(janela_popup, text="Inserir Item 0200", command=inserir_item)
+    botao_inserir.pack()
+    
+    janela_popup.mainloop()
+
+def selecionar_arquivo_cat():
+    global arquivo
+    arquivo = filedialog.askopenfilename(initialdir=CAMINHO_ARQUIVOS,
+                                         title="Selecionar ArquivoCat",
+                                         filetypes=(("Arquivos de texto", "*.txt"), ("todos os arquivos", "*.*")))
+
+def selecionar_base0200():
+    global base0200_path
+    base0200_path = filedialog.askopenfilename(initialdir=CAMINHO_ARQUIVOS,
+                                               title="Selecionar Base do 0200",
+                                               filetypes=(("Arquivos Excel", "*.xlsx"), ("todos os arquivos", "*.*")))
+
+root = tk.Tk()
+root.title("Processador de Arquivos")
+root.geometry("244x150")
+botao_selecionar = Button(root, text="Selecionar ArquivoCat", command=selecionar_arquivo_cat, height=2, width=20)
+botao_selecionar.pack(pady=6)
+botao_selecionar_base = Button(root, text="Selecionar Base do 0200", command=selecionar_base0200, height=2, width=20)
+botao_selecionar_base.pack(pady=6)
+botao_iniciar = Button(root, text="Iniciar", command=processar_dados)
+botao_iniciar.pack(pady=6)
+root.mainloop()
